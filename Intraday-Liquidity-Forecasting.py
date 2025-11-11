@@ -1,17 +1,10 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import statsmodels.api as sm
 import plotly.graph_objects as go
 from datetime import timedelta
 
-
-HAS_SM = True
-try:
-    import statsmodels.api as sm
-except Exception:
-    HAS_SM = False
-import numpy as np
+SIMPLE_MODE = True
 
 
 st.set_page_config(page_title="Intraday Liquidity Forecasting", layout="wide")
@@ -53,32 +46,32 @@ if missing:
 df = df.sort_values("timestamp").reset_index(drop=True)
 
 
-# 2. SARIMAX forecast
-# df: must have timestamp, net_flow
-y = (df.set_index("timestamp")["net_flow"]
-       .asfreq(f"{freq_minutes}min")
-       .fillna(0.0))
+# -----------------------------
+# 2) FORECAST: Seasonal profile baseline (fast, no heavy deps)
+# -----------------------------
+st.subheader("🔮 Forecast setup")
 
-# daily seasonal period ≈ number of steps per day
-m = max(1, int(round(24*60/freq_minutes)))
+steps_per_day = max(1, int(round(24 * 60 / freq_minutes)))
+y_series = (df.set_index("timestamp")["net_flow"]
+              .asfreq(f"{freq_minutes}min")
+              .fillna(0.0))
 
-res = sm.tsa.statespace.SARIMAX(
-    y, order=(1,0,1), seasonal_order=(0,1,1,m),
-    enforce_stationarity=False, enforce_invertibility=False
-).fit(disp=False)
+# Build a median intraday profile by time bucket
+tmp = y_series.to_frame("net_flow")
+tmp["bucket"] = ((tmp.index.hour * 60 + tmp.index.minute) // freq_minutes).astype(int)
+profile = tmp.groupby("bucket")["net_flow"].median()
 
-idx = pd.date_range(
-    y.index[-1] + pd.Timedelta(minutes=freq_minutes),
+future_idx = pd.date_range(
+    y_series.index[-1] + pd.Timedelta(minutes=freq_minutes),
     periods=horizon_steps,
     freq=f"{freq_minutes}min"
 )
-pred = res.get_forecast(steps=horizon_steps)
+buckets = ((future_idx.hour * 60 + future_idx.minute) // freq_minutes).astype(int)
 
 forecast = pd.DataFrame({
-    "timestamp": idx,
-    "netflow_forecast": pred.predicted_mean.values
+    "timestamp": future_idx,
+    "netflow_forecast": profile.reindex(buckets).to_numpy()
 })
-# optional placeholders if the rest of your code references them
 forecast["yhat_lower"] = np.nan
 forecast["yhat_upper"] = np.nan
 
