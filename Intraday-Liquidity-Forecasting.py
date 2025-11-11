@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from prophet import Prophet
+import statsmodels.api as sm
 import plotly.graph_objects as go
 from datetime import timedelta
 
@@ -43,34 +43,36 @@ if missing:
 
 df = df.sort_values("timestamp").reset_index(drop=True)
 
-# -----------------------------
-# 2) MODEL: PROPHET ON NET FLOW
-# -----------------------------
-st.subheader("🔮 Forecast setup")
 
-# Prophet expects columns: ds (datetime), y (value)
-prophet_df = df[["timestamp", "net_flow"]].rename(columns={"timestamp": "ds", "net_flow": "y"}).copy()
+# 2. SARIMAX forecast
+# df: must have timestamp, net_flow
+y = (df.set_index("timestamp")["net_flow"]
+       .asfreq(f"{freq_minutes}min")
+       .fillna(0.0))
 
-# Add custom intraday seasonality for 15-min data (≈ 96 points/day)
-periods_per_day = max(1, int(round(24 * 60 / freq_minutes)))
-prophet_model = Prophet(daily_seasonality=False, weekly_seasonality=True, yearly_seasonality=False)
-# Add strong intraday (daily) cycle via Fourier terms
-prophet_model.add_seasonality(name='intraday', period=1.0, fourier_order=10)  # 1 day period in Prophet's scaling
-# NOTE: Prophet uses days as units; adding custom seasonality with period=1 (day) handles intraday cyclicity via fourier_order
+# daily seasonal period ≈ number of steps per day
+m = max(1, int(round(24*60/freq_minutes)))
 
-with st.spinner("Training Prophet model on net flows..."):
-    prophet_model.fit(prophet_df)
+res = sm.tsa.statespace.SARIMAX(
+    y, order=(1,0,1), seasonal_order=(0,1,1,m),
+    enforce_stationarity=False, enforce_invertibility=False
+).fit(disp=False)
 
-with st.sidebar:
-    st.header("📈 Forecast horizon")
-    horizon_steps = st.slider("Future steps (15-min intervals)", min_value=16, max_value=96, value=48, step=8)
-    pass_through = st.slider("Settlement pass-through to CB balance (%)", 0, 100, 20, step=5)
-
-future = prophet_model.make_future_dataframe(periods=horizon_steps, freq=f"{freq_minutes}min", include_history=False)
-forecast = prophet_model.predict(future)
-forecast = forecast[["ds", "yhat", "yhat_lower", "yhat_upper"]].rename(
-    columns={"ds": "timestamp", "yhat": "netflow_forecast"}
+idx = pd.date_range(
+    y.index[-1] + pd.Timedelta(minutes=freq_minutes),
+    periods=horizon_steps,
+    freq=f"{freq_minutes}min"
 )
+pred = res.get_forecast(steps=horizon_steps)
+
+forecast = pd.DataFrame({
+    "timestamp": idx,
+    "netflow_forecast": pred.predicted_mean.values
+})
+# optional placeholders if the rest of your code references them
+forecast["yhat_lower"] = np.nan
+forecast["yhat_upper"] = np.nan
+
 
 # ----------------------------------------------------
 # 3) WHAT-IF STRESS PANEL (APPLIED TO FORECAST PERIOD)
