@@ -5,6 +5,15 @@ import statsmodels.api as sm
 import plotly.graph_objects as go
 from datetime import timedelta
 
+
+HAS_SM = True
+try:
+    import statsmodels.api as sm
+except Exception:
+    HAS_SM = False
+import numpy as np
+
+
 st.set_page_config(page_title="Intraday Liquidity Forecasting", layout="wide")
 
 # -----------------------------
