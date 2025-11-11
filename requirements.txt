@@ -1,0 +1,8 @@
+streamlit==1.39.0
+prophet==1.1.5
+cmdstanpy==1.2.4
+plotly==5.24.1
+pandas==2.2.2
+numpy==1.26.4
+setuptools>=70.0.0
+wheel
